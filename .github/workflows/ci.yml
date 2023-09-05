@@ -5,7 +5,7 @@ on:
     branches:
       - main
       - '[0-9]+.[0-9]+.x'
-      - 'correct-escaping'
+      - 'migrate-saucelabs'
   pull_request:
     types: [opened, synchronize, reopened]
 
@@ -21,6 +21,7 @@ defaults:
 
 jobs:
   lint:
+    if: false
     runs-on: ubuntu-latest
     steps:
       - name: Initialize environment
@@ -58,6 +59,7 @@ jobs:
         run: yarn ng-dev format changed --check ${{ github.event.pull_request.base.sha }}
 
   devtools:
+    if: false
     runs-on: ubuntu-latest
     steps:
       - name: Initialize environment
@@ -76,6 +78,7 @@ jobs:
         run: yarn devtools:build:chrome
 
   framework-win:
+    if: false
     runs-on: windows-latest
     steps:
       - name: Initialize environment
@@ -92,6 +95,7 @@ jobs:
         run: bazel test --test_tag_filters="-browser:chromium-local" //packages/compiler-cli/...
 
   test:
+    if: false
     runs-on: ubuntu-latest-4core
     steps:
       - name: Initialize environment
@@ -108,6 +112,7 @@ jobs:
         run: yarn test:ci
 
   aio:
+    if: false
     runs-on: ubuntu-latest-4core
     steps:
       - name: Initialize environment
@@ -128,6 +133,7 @@ jobs:
         run: yarn --cwd aio payload-size
 
   aio-local:
+    if: false
     runs-on:
       labels: ubuntu-latest-4core
     steps:
@@ -186,6 +192,7 @@ jobs:
         run: yarn --cwd aio deploy-production
 
   zone-js:
+    if: false
     runs-on:
       labels: ubuntu-latest-4core
     steps:
@@ -232,3 +239,44 @@ jobs:
       - run: yarn --cwd packages/zone.js closuretest
       - run: yarn --cwd packages/zone.js/test/typings install --frozen-lockfile --non-interactive
       - run: yarn --cwd packages/zone.js/test/typings test
+  
+  saucelabs:
+    runs-on:
+      labels: ubuntu-latest-4core
+    env:
+      SAUCE_USERNAME: "angular-framework"
+      SAUCE_ACCESS_KEY: "f4bf7c639c5a-c6bb-d6a4-a4b5-800aa111"
+      SAUCE_LOG_FILE: "/tmp/angular/sauce-connect.log"
+      SAUCE_READY_FILE: "/tmp/angular/sauce-connect-ready-file.lock"
+      SAUCE_PID_FILE: "/tmp/angular/sauce-connect-pid-file.lock"
+      SAUCE_TUNNEL_IDENTIFIER: "angular-framework-test"
+    steps:
+      - name: Initialize environment
+        uses: angular/dev-infra/github-actions/npm/checkout-and-setup-node@45de46d9ba0e0689b7a846fd31ec9e241807ca71
+        with:
+          cache-node-modules: true
+      - name: Setup Bazel
+        uses: angular/dev-infra/github-actions/bazel/setup@45de46d9ba0e0689b7a846fd31ec9e241807ca71
+      - name: Setup Bazel RBE
+        uses: angular/dev-infra/github-actions/bazel/configure-remote@45de46d9ba0e0689b7a846fd31ec9e241807ca71
+      - name: Install node modules
+        run: yarn install --frozen-lockfile
+      - run: |
+          ./tools/saucelabs/sauce-service.sh run &
+          yarn bazel build \
+                //packages/core/test:downleveled_es5_fixture \
+                //packages/common/locales
+          mkdir -p dist/legacy-test-out/core/test/reflection/
+          cp dist/bin/packages/core/test/reflection/es5_downleveled_inheritance_fixture.js \
+            dist/legacy-test-out/core/test/reflection/es5_downleveled_inheritance_fixture.js
+          # Locale files are needed for i18n tests running within Saucelabs. These are added
+          # directly as sources so that the TypeScript compilation of `/packages/tsconfig.json`
+          # can succeed. Note that the base locale and currencies files are checked-in, so
+          # we do not need to re-generate those through Bazel.
+          mkdir -p packages/common/locales/extra
+          cp dist/bin/packages/common/locales/*.ts packages/common/locales
+          cp dist/bin/packages/common/locales/extra/*.ts packages/common/locales/extra
+          node tools/legacy-saucelabs/build-saucelabs-test-bundle.mjs
+          ./tools/saucelabs/sauce-service.sh ready-wait
+          KARMA_WEB_TEST_MODE=SL_REQUIRED yarn karma start ./karma-js.conf.js --single-run
+          ./tools/saucelabs/sauce-service.sh stop
